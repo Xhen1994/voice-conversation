@@ -72,19 +72,52 @@ Whisper 转录 → 文字
 
 ## Configuration
 
-需要在脚本中配置以下参数：
+此 Skill 需要配置以下环境变量才能正常运行：
 
-```javascript
-const CONFIG = {
-  TELEGRAM_BOT_TOKEN: 'your-bot-token',
-  CHAT_ID: 'your-chat-id',
-  OPENCLAW_HOST: '127.0.0.1',
-  OPENCLAW_PORT: 18789,
-  OPENCLAW_TOKEN: 'your-token',
-  FFmpeg: '/usr/bin/ffmpeg',
-  EDGE_VOICE: 'zh-CN-XiaoxiaoNeural'
-};
+### 必需配置
+
+| 环境变量 | 说明 | 获取方式 |
+|---------|------|---------|
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | @BotFather 创建机器人获取 |
+| `TELEGRAM_CHAT_ID` | 你的 Telegram Chat ID | @userinfobot 获取 |
+| `OPENCLAW_TOKEN` | OpenClaw API Token | OpenClaw 配置中获取 |
+
+### 可选配置
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `OPENCLAW_HOST` | `127.0.0.1` | OpenClaw 主机地址 |
+| `OPENCLAW_PORT` | `18789` | OpenClaw 端口 |
+| `FFmpeg_PATH` | `/usr/bin/ffmpeg` | FFmpeg 路径 |
+| `PYTHON_PATH` | `/usr/bin/python` | Python 路径 |
+| `EDGE_VOICE` | `zh-CN-XiaoxiaoNeural` | Edge TTS 语音 |
+| `AUDIO_DIR` | `~/.openclaw/media/voice` | 音频存储目录 |
+
+### 配置示例
+
+```bash
+# 在运行前设置环境变量
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
+export OPENCLAW_TOKEN="your-openclaw-token"
+
+# 然后启动 skill
+node index.js
 ```
+
+或创建 `.env` 文件：
+```bash
+TELEGRAM_BOT_TOKEN=your-bot-token
+TELEGRAM_CHAT_ID=your-chat-id
+OPENCLAW_TOKEN=your-openclaw-token
+```
+
+## ⚠️ 安全注意
+
+**发布到 ClawHub 前请务必：**
+1. 移除所有硬编码的 tokens、API keys
+2. 使用环境变量或用户输入代替
+3. 在 SKILL.md 中说明需要用户配置哪些参数
 
 ## Notes
 

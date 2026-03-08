@@ -12,26 +12,27 @@ const FormData = require('form-data');
 // 添加 PATH 环境变量，让 Whisper 能找到 ffmpeg
 const env = {
  ...process.env,
- PATH: '/home/xhen/miniconda3/envs/GPTSoVits/bin:' + (process.env.PATH || '')
+ PATH: (process.env.PATH || '/usr/local/bin:/usr/bin:/bin')
 };
 
 const CONFIG = {
- TELEGRAM_BOT_TOKEN: '8700456913:AAEJJYewXQV0IiPp5bO6rcwbezx8xng0-Go', 
- CHAT_ID: '6867855688',
+ // Telegram 配置 (必需)
+ TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || 'your-bot-token-here', 
+ CHAT_ID: process.env.TELEGRAM_CHAT_ID || 'your-chat-id-here',
  
- // Agent API
- OPENCLAW_HOST: '127.0.0.1',
- OPENCLAW_PORT: 18789,
- OPENCLAW_TOKEN: '0e37e4885c4900df4d7f3d9033a2f545a8d401d99b76b78d',
+ // Agent API (必需)
+ OPENCLAW_HOST: process.env.OPENCLAW_HOST || '127.0.0.1',
+ OPENCLAW_PORT: process.env.OPENCLAW_PORT || 18789,
+ OPENCLAW_TOKEN: process.env.OPENCLAW_TOKEN || 'your-openclaw-token-here',
  
- // 本地应用 (绝对路径)
- FFmpeg: '/home/xhen/miniconda3/envs/GPTSoVits/bin/ffmpeg',
- Python: '/home/xhen/miniconda3/envs/GPTSoVits/bin/python',
+ // 本地应用路径 (可选，有默认值)
+ FFmpeg: process.env.FFmpeg_PATH || '/usr/bin/ffmpeg',
+ Python: process.env.PYTHON_PATH || '/usr/bin/python',
  
- // Edge TTS
- EDGE_VOICE: 'zh-CN-XiaoxiaoNeural',
- AUDIO_DIR: path.join(process.env.HOME, '.openclaw', 'media', 'voice'),
- STATE_FILE: path.join(process.env.HOME, '.openclaw', 'media', 'voice', '.last_update_id')
+ // Edge TTS 配置 (可选)
+ EDGE_VOICE: process.env.EDGE_VOICE || 'zh-CN-XiaoxiaoNeural',
+ AUDIO_DIR: process.env.AUDIO_DIR || path.join(process.env.HOME || '/home/xhen', '.openclaw', 'media', 'voice'),
+ STATE_FILE: process.env.STATE_FILE || path.join(process.env.HOME || '/home/xhen', '.openclaw', 'media', 'voice', '.last_update_id')
 };
 
 if (!fs.existsSync(CONFIG.AUDIO_DIR)) {
