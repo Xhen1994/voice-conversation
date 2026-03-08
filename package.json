@@ -1,0 +1,19 @@
+{
+  "name": "@bamboo/voice-conversation",
+  "version": "1.0.0",
+  "description": "Voice conversation skill for OpenClaw - Whisper + Agent + Edge TTS",
+  "main": "index.js",
+  "keywords": ["voice", "telegram", "whisper", "tts", "openclaw"],
+  "author": "Bamboo",
+  "license": "MIT",
+  "dependencies": {
+    "form-data": "^4.0.0",
+    "edge-tts": "^1.0.0"
+  },
+  "openclaw": {
+    "skill": {
+      "name": "Voice Conversation",
+      "slug": "voice-conversation"
+    }
+  }
+}
