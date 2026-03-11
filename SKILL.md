@@ -1,11 +1,11 @@
 ---
 name: Voice Conversation
 slug: voice-conversation
-version: 1.1.0
-description: 处理语音消息 - Whisper 转录 + Agent 回复 + Edge TTS 语音回复。支持语音→语音、文字→文字的对话模式，并支持图片识别和文件发送。
+version: 1.2.0
+description: 处理语音消息 - Whisper 转录 (FastAPI 服务器) + Agent 回复 + Edge TTS 语音回复。支持语音→语音、文字→文字的对话模式，并支持图片识别和文件发送。
 metadata:
   author: Bamboo
-  tags: [voice, telegram, whisper, tts, image, file]
+  tags: [voice, telegram, whisper, tts, image, file, fastapi]
 ---
 
 ## When to Use
@@ -21,18 +21,35 @@ metadata:
 - Node.js 环境
 - FFmpeg (系统安装)
 - Python with Whisper (`pip install whisper`)
+- FastAPI + uvicorn (`pip install fastapi uvicorn python-multipart`)
 - node-edge-tts (`npm install node-edge-tts form-data`)
 - Telegram Bot Token
+- Conda 环境 (GPTSoVits 或包含 Whisper 的环境)
 
 ## Flow
 
 ```
 用户发送消息
     │
-    ├── 语音 → 下载 → FFmpeg 转换 → Whisper 转录 → Agent → Edge TTS → 语音回复
+    ├── 语音 → 下载 → FFmpeg 转换 → Whisper API → Agent → Edge TTS → 语音回复
     ├── 文字 → Agent → 文字回复
     ├── 图片 → 下载 → Agent 识别 → 文字回复
     └── 文件请求 → 检测路径 → 发送文件
+```
+
+### 架构说明
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Voice Agent    │────▶│ Whisper Server   │────▶│  Whisper 模型   │
+│  (Node.js)      │     │  (FastAPI :8000) │     │  (~/.cache/)    │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│  OpenClaw API   │
+│  (Gateway)      │
+└─────────────────┘
 ```
 
 ## Commands
@@ -64,10 +81,10 @@ metadata:
 
 ## Features
 
-### 1. 语音对话
+### 1. 语音对话 (FastAPI Whisper 服务器)
 - 自动下载 Telegram 语音消息 (.ogg)
 - FFmpeg 转换为 WAV (16kHz, 单声道)
-- 本地 Whisper 转录为文字
+- **调用 FastAPI Whisper 服务器** (模型常驻内存，无需重复加载)
 - 调用 Agent API 获取回复
 - Edge TTS 生成语音回复 (自动过滤 emoji 和 Markdown 加粗)
 - 转换为 OGG/OPUS 格式发送
@@ -95,6 +112,11 @@ metadata:
 - 模型缓存（60 秒 TTL）避免频繁请求
 - 消息历史在切换模型时自动清空
 
+### 6. systemd 自动重启
+- 用户登录时自动启动
+- 进程崩溃后 5 秒自动重启
+- 日志集成到 systemd journal
+
 ## Configuration
 
 此 Skill 需要配置以下环境变量才能正常运行：
@@ -114,28 +136,28 @@ metadata:
 | `OPENCLAW_HOST` | `127.0.0.1` | OpenClaw 主机地址 |
 | `OPENCLAW_PORT` | `18789` | OpenClaw 端口 |
 | `FFmpeg_PATH` | `/usr/bin/ffmpeg` | FFmpeg 路径 |
-| `PYTHON_PATH` | `/home/xhen/miniconda3/envs/GPTSoVits/bin/python` | Python 路径 |
+| `PYTHON_PATH` | `~/miniconda3/envs/GPTSoVits/bin/python` | Python 路径 |
 | `EDGE_VOICE` | `zh-CN-XiaoxiaoNeural` | Edge TTS 语音 |
 | `AUDIO_DIR` | `~/.openclaw/media/voice` | 音频存储目录 |
 | `STATE_FILE` | `~/.openclaw/media/voice/.last_update_id` | Telegram 轮询状态文件 |
 
+### 模型缓存位置
+
+Whisper 模型统一缓存在：`~/.cache/whisper/small.pt` (462M)
+
 ### 配置示例
 
 ```bash
-# 在运行前设置环境变量
+# 方式 1: 环境变量
 export TELEGRAM_BOT_TOKEN="your-bot-token"
 export TELEGRAM_CHAT_ID="your-chat-id"
 export OPENCLAW_TOKEN="your-openclaw-token"
+./start.sh
 
-# 然后启动 skill
-node index.js
-```
-
-或创建 `.env` 文件：
-```bash
-TELEGRAM_BOT_TOKEN=your-bot-token
-TELEGRAM_CHAT_ID=your-chat-id
-OPENCLAW_TOKEN=your-openclaw-token
+# 方式 2: .env 文件
+cp .env.example .env
+# 编辑 .env 填入配置
+./start.sh
 ```
 
 ## Usage
@@ -143,39 +165,55 @@ OPENCLAW_TOKEN=your-openclaw-token
 ### 启动方式
 
 ```bash
-# 方式 1: 直接运行
-node index.js
-
-# 方式 2: 使用启动脚本
+# 方式 1: 使用启动脚本 (推荐，自动启动 Whisper 服务器)
 ./start.sh
 
-# 方式 3: 后台运行
-nohup node index.js > voice.log 2>&1 &
+# 方式 2: systemd 服务 (开机自启 + 自动重启)
+systemctl --user start voice-conversation
+systemctl --user enable voice-conversation  # 开机自启
+
+# 方式 3: 手动启动 (仅测试用)
+node index.js
+```
+
+### 管理命令
+
+```bash
+# 查看状态
+systemctl --user status voice-conversation
+
+# 重启服务
+systemctl --user restart voice-conversation
+
+# 查看日志
+journalctl --user -u voice-conversation -f
+tail -f /tmp/voice-conversation.log
+tail -f /tmp/whisper-server.log
 ```
 
 ### 对话示例
 
 **语音对话:**
 ```
-用户: [发送语音] "今天天气怎么样？"
+用户：[发送语音] "今天天气怎么样？"
 Bot: [语音回复] "今天天气晴朗，气温适宜..."
 ```
 
 **图片识别:**
 ```
-用户: [发送图片] "这是什么花？"
+用户：[发送图片] "这是什么花？"
 Bot: [文字回复] "这是一朵玫瑰花..."
 ```
 
 **文件发送:**
 ```
-用户: "把 /home/xhen/report.pdf 发给我"
+用户："把 /home/xhen/report.pdf 发给我"
 Bot: [发送文件] report.pdf
 ```
 
 **模型切换:**
 ```
-用户: "/model minimax-m2.5-lightning"
+用户："/model minimax-m2.5-lightning"
 Bot: "✅ 模型已手动切换：minimax-portal/MiniMax-M2.5-Lightning"
 ```
 
@@ -195,18 +233,55 @@ Bot: "✅ 模型已手动切换：minimax-portal/MiniMax-M2.5-Lightning"
 - 使用递归轮询避免请求重叠
 - 仅响应配置的 Chat ID，防止他人使用
 - 模型配置自动从 Gateway 同步，保持全局一致
+- **Whisper 模型常驻内存**，转录速度更快
+- **systemd 自动重启**，服务更稳定
 
 ## Project Structure
 
 ```
 voice-conversation/
-├── index.js              # 主程序
-├── whisper-transcribe.py # Whisper 转录脚本
-├── start.sh              # 启动脚本
-├── package.json          # Node.js 依赖
-├── .env                  # 环境变量配置 (不要提交)
-├── .env.example          # 环境变量示例
-├── SKILL.md              # 技能文档
-├── IMAGE_HANDLING.md     # 图片处理说明
-└── MODEL_SWITCH.md       # 模型切换说明
+├── index.js                    # 主程序 (Node.js)
+├── whisper_server.py           # Whisper FastAPI 服务器 (Python)
+├── whisper-transcribe.py       # Whisper 转录脚本 (备用)
+├── start.sh                    # 启动脚本 (激活环境 + 启动双服务)
+├── voice-conversation.service  # systemd 服务配置
+├── package.json                # Node.js 依赖
+├── .env                        # 环境变量配置 (不要提交)
+├── .env.example                # 环境变量示例
+├── .gitignore                  # Git 忽略配置
+├── SKILL.md                    # 技能文档
+├── IMAGE_HANDLING.md           # 图片处理说明
+└── MODEL_SWITCH.md             # 模型切换说明
 ```
+
+## API Endpoints
+
+### Whisper Server (FastAPI :8000)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/transcribe` | POST | 上传音频文件进行转录 |
+| `/docs` | GET | API 文档 (Swagger UI) |
+
+**转录示例:**
+```bash
+curl -X POST http://127.0.0.1:8000/transcribe \
+  -F "file=@audio.wav"
+```
+
+## Version History
+
+### v1.2.0 (当前版本)
+- ✅ 新增 FastAPI Whisper 服务器，模型常驻内存
+- ✅ 新增 systemd 自动重启服务
+- ✅ 统一模型缓存位置 (`~/.cache/whisper/small.pt`)
+- ✅ 优化启动脚本，自动管理双服务
+- ✅ 更新文档说明新架构
+
+### v1.1.0
+- 新增图片识别功能
+- 新增文件发送功能
+- 新增模型管理命令
+
+### v1.0.0
+- 初始版本，基础语音对话功能

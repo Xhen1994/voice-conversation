@@ -5,6 +5,6 @@ os.environ['PATH'] = '/home/xhen/miniconda3/envs/GPTSoVits/bin'
 
 import sys
 import whisper
-model = whisper.load_model('base')
+model = whisper.load_model('small')
 result = model.transcribe(sys.argv[1], language='zh')
 print(result['text'])

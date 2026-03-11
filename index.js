@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Voice & Text Handler - 修正版
+ * Voice & Text Handler - 修正版 (已修复崩溃隐患 & 并发优化)
  */
 const https = require('https');
 const http = require('http');
@@ -223,6 +223,9 @@ async function downloadPhoto(fileId) {
   const destPath = path.join(CONFIG.AUDIO_DIR, `photo_${Date.now()}.jpg`);
   return new Promise((resolve, reject) => {
     const fileStream = fs.createWriteStream(destPath);
+    // ✅ 新增：监听流错误，防止崩溃
+    fileStream.on('error', (err) => reject(new Error(`图片写入失败: ${err.message}`)));
+    
     https.get(photoUrl, (response) => {
       response.pipe(fileStream);
       fileStream.on('finish', () => { fileStream.close(); resolve(destPath); });
@@ -237,6 +240,9 @@ async function downloadVoice(fileId) {
  const destPath = path.join(CONFIG.AUDIO_DIR, `voice_${Date.now()}.ogg`);
  return new Promise((resolve, reject) => {
  const fileStream = fs.createWriteStream(destPath);
+ // ✅ 新增：监听流错误，防止崩溃
+ fileStream.on('error', (err) => reject(new Error(`语音写入失败: ${err.message}`)));
+ 
  https.get(voiceUrl, (response) => {
  response.pipe(fileStream);
  fileStream.on('finish', () => { fileStream.close(); resolve(destPath); });
@@ -254,31 +260,65 @@ async function convertToWav(inputPath, outputPath) {
  '-c:a', 'pcm_s16le',
  '-y', outputPath
  ]);
+ // ✅ 新增：监听子进程启动或运行错误
+ ffmpeg.on('error', (err) => reject(new Error(`启动 FFmpeg 失败: ${err.message}`)));
  ffmpeg.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`)));
  });
 }
 
-// ==================== 4. 本地 Whisper 转录 ====================
+// ==================== 4. 调用常驻 Whisper API ====================
 async function transcribeWithWhisperAPI(audioPath) {
+  const form = new FormData();
+  form.append('file', fs.createReadStream(audioPath));
+
   return new Promise((resolve, reject) => {
-    // 使用 Python wrapper 脚本调用 whisper
-    const scriptPath = path.join(path.dirname(__filename), 'whisper-transcribe.py');
-    const proc = spawn(CONFIG.Python, [scriptPath, audioPath]);
-    let output = '';
-    let error = '';
-    proc.stdout.on('data', (d) => output += d);
-    proc.stderr.on('data', (d) => error += d);
-    proc.on('close', (code) => {
-      if (code === 0) resolve(output.trim());
-      else reject(new Error(error || 'Whisper failed: ' + code));
+    const options = {
+      hostname: '127.0.0.1',
+      port: 8000,  // FastAPI 默认端口
+      path: '/transcribe',
+      method: 'POST',
+      headers: form.getHeaders()
+    };
+
+    const req = http.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(body);
+          if (res.statusCode === 200 && result.text !== undefined) {
+            resolve(result.text);
+          } else {
+            reject(new Error(`Whisper API 报错: ${body}`));
+          }
+        } catch (e) {
+          reject(new Error(`解析 Whisper 响应失败: ${e.message}`));
+        }
+      });
     });
+
+    req.on('error', reject);
+    form.pipe(req); // 将文件流 pipe 过去
   });
 }
 
 // ==================== 5. 调用 Agent API (手动维护消息历史) ====================
 // 维护消息历史
 const messageHistory = [];
-
+const MAX_HISTORY_LENGTH = 20;
+// 辅助函数：裁剪历史记录，确保不会超出限制，且始终以 'user' 角色开头
+function trimMessageHistory() {
+  if (messageHistory.length > MAX_HISTORY_LENGTH) {
+    // 计算需要剔除的消息数量
+    let removeCount = messageHistory.length - MAX_HISTORY_LENGTH;
+    // 很多大模型 API (如 Claude/Qwen) 严格要求历史记录必须以 user 开头
+    // 如果剔除后第一条变成了 assistant，我们就多删一条
+    if (messageHistory[removeCount] && messageHistory[removeCount].role === 'assistant') {
+      removeCount++;
+    }
+    messageHistory.splice(0, removeCount);
+  }
+}
 async function getCurrentModel() {
   // 优先使用用户手动设置的模型，其次从 Gateway 同步
   if (CONFIG._manualModel) {
@@ -321,6 +361,8 @@ function sendToAgent(message) {
  const reply = result.choices[0].message.content;
  // 添加助手回复到历史
  messageHistory.push({ role: 'assistant', content: reply });
+ // ✅ 触发滑动窗口清理
+trimMessageHistory();
  resolve(reply);
  } else if (result.error) {
  reject(new Error(result.error.message));
@@ -373,6 +415,8 @@ async function sendVoice(mp3Path, replyToMessageId = null) {
  '-vbr', 'on',
  '-y', oggPath
  ]);
+ // ✅ 新增：监听子进程启动或运行错误
+ ffmpeg.on('error', (err) => reject(new Error(`启动 FFmpeg (ogg转换) 失败: ${err.message}`)));
  ffmpeg.on('close', (code) => code === 0 ? resolve() : reject(new Error('ffmpeg convert to ogg failed')));
  });
 
@@ -429,7 +473,7 @@ async function handleVoiceMessage(message) {
  tempFiles.push(wavPath);
  await convertToWav(voicePath, wavPath);
 
- console.log('📝 转录中 (本地Whisper)...');
+ console.log('📝 转录中 (调用常驻Whisper API)...');
  await sendChatAction('typing');
  const transcribedText = await transcribeWithWhisperAPI(wavPath);
  console.log(`📝 转录结果: ${transcribedText}`);
@@ -650,15 +694,21 @@ ${aliasList}
      console.log(`✅ 文件已发送：${fileName} (${fileSize} bytes)`);
     }
    }
+} else if (cmd === '/clear') {
+    // 手动清空上下文
+    messageHistory.length = 0;
+    await sendText('🧹 **对话历史已清空**\n现在我们可以开始全新的话题了。', messageId);
+    console.log('🔄 对话历史已手动清空');
 } else if (cmd === '/help') {
    await sendText(
 `🎋 **Voice Agent 帮助**
 
 **可用命令**:
-• `/model` - 查看当前模型和可用模型列表
-• `/model <名称>` - 切换模型（使用别名或完整路径）
-• `/file <路径> [说明]` - 发送本地文件
-• `/help` - 显示此帮助信息
+• \`/model\` - 查看当前模型和可用模型列表
+• \`/model <名称>\` - 切换模型（使用别名或完整路径）
+• \`/file <路径> [说明]\` - 发送本地文件
+• \`/clear\` - 🧹 清空当前对话的记忆
+• \`/help\` - 显示此帮助信息
 
 **发送语音或文字消息**即可与我对话！`,
     messageId
@@ -748,6 +798,8 @@ async function handlePhotoMessage(message) {
      if (result.choices && result.choices[0]) {
       const reply = result.choices[0].message.content;
       messageHistory.push({ role: 'assistant', content: reply });
+	  // ✅ 触发滑动窗口清理
+	  trimMessageHistory();
       resolve(reply);
      } else if (result.error) {
       reject(new Error(result.error.message));
@@ -780,36 +832,41 @@ async function handlePhotoMessage(message) {
 async function processUpdates() {
  let lastUpdateId = 0;
  if (fs.existsSync(CONFIG.STATE_FILE)) {
- lastUpdateId = parseInt(fs.readFileSync(CONFIG.STATE_FILE, 'utf8'));
+  lastUpdateId = parseInt(fs.readFileSync(CONFIG.STATE_FILE, 'utf8'));
  }
  try {
- const updates = await telegramRequest('getUpdates', {
- offset: lastUpdateId + 1,
- timeout: 30
- });
- for (const update of updates) {
- lastUpdateId = update.update_id;
- const msg = update.message;
- if (!msg) continue;
- // 限制只能自己使用
- if (msg.chat.id.toString() !== CONFIG.CHAT_ID) continue;
- 
- if (msg.voice) {
- await handleVoiceMessage(msg);
- } else if (msg.text) {
- await handleTextMessage(msg);
- } else if (msg.photo) {
- await handlePhotoMessage(msg);
- }
- }
- if (lastUpdateId > 0) {
- fs.writeFileSync(CONFIG.STATE_FILE, lastUpdateId.toString());
- }
+  const updates = await telegramRequest('getUpdates', {
+   offset: lastUpdateId + 1,
+   timeout: 30
+  });
+  
+  for (const update of updates) {
+   lastUpdateId = update.update_id;
+   const msg = update.message;
+   
+   if (!msg) continue;
+   // 限制只能自己使用
+   if (msg.chat.id.toString() !== CONFIG.CHAT_ID) continue;
+   
+   // 【核心优化】：去掉 await，并在后面加上 .catch 捕获异常
+   // 这样轮询循环会瞬间过掉，消息会在后台并发处理
+   if (msg.voice) {
+    handleVoiceMessage(msg).catch(e => console.error('❌ 后台处理语音失败:', e));
+   } else if (msg.text) {
+    handleTextMessage(msg).catch(e => console.error('❌ 后台处理文字失败:', e));
+   } else if (msg.photo) {
+    handlePhotoMessage(msg).catch(e => console.error('❌ 后台处理图片失败:', e));
+   }
+  }
+  
+  if (updates.length > 0) {
+   fs.writeFileSync(CONFIG.STATE_FILE, lastUpdateId.toString());
+  }
  } catch (error) {
- console.error('❌ 轮询出错:', error.message);
- console.error('错误堆栈:', error.stack);
- console.error('CHAT_ID 配置:', CONFIG.CHAT_ID);
- console.error('lastUpdateId:', lastUpdateId);
+  console.error('❌ 轮询出错:', error.message);
+  console.error('错误堆栈:', error.stack);
+  console.error('CHAT_ID 配置:', CONFIG.CHAT_ID);
+  console.error('lastUpdateId:', lastUpdateId);
  }
 }
 
@@ -836,4 +893,8 @@ async function main() {
  setTimeout(startPolling, 1000);
 }
 
-main();
+// ✅ 新增：拦截全局未捕获的 Promise 异常，防止进程退出
+main().catch(err => {
+  console.error('💥 致命错误，主程序异常退出:', err);
+  process.exit(1);
+});

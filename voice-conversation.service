@@ -1,0 +1,33 @@
+[Unit]
+Description=Voice Conversation - Telegram Voice/Text Handler
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/xhen/.openclaw/workspace/skills/voice-conversation
+
+# 环境变量
+Environment="TELEGRAM_BOT_TOKEN=8700456913:AAEJJYewXQV0IiPp5bO6rcwbezx8xng0-Go"
+Environment="TELEGRAM_CHAT_ID=6867855688"
+Environment="OPENCLAW_TOKEN=0e37e4885c4900df4d7f3d9033a2f545a8d401d99b76b78d"
+Environment="OPENCLAW_HOST=127.0.0.1"
+Environment="OPENCLAW_PORT=18789"
+Environment="EDGE_VOICE=zh-CN-XiaoxiaoNeural"
+Environment="AUDIO_DIR=/home/xhen/.openclaw/media/voice"
+
+# 启动脚本（激活 conda 环境并启动 node）
+ExecStart=/home/xhen/.openclaw/workspace/skills/voice-conversation/start.sh
+
+# 自动重启策略
+Restart=always
+RestartSec=5
+
+# 资源限制
+LimitNOFILE=65536
+
+# 日志
+StandardOutput=append:/tmp/voice-conversation.log
+StandardError=append:/tmp/voice-conversation.log
+
+[Install]
+WantedBy=default.target
